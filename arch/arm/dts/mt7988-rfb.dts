@@ -12,6 +12,11 @@
 	model = "mt7988-rfb";
 	compatible = "mediatek,mt7988-rfb";
 
+	aliases {
+		ethernet0 = &eth0; /* keep built-in switch as eth0 */
+		ethernet1 = &rtl_eth; /* PCI RTL8125/8169 as eth1 */
+	};
+
 	chosen {
 		stdout-path = &uart0;
 	};
@@ -108,6 +113,24 @@
 
 &pcie1 {
 	status = "okay";
+
+	/* PCI device node for an on-board Realtek RTL8169/8125 family NIC.
+	 * Declaring device_type = "pci" and a reg entry makes the device
+	 * visible to U-Boot's OF/PCI infrastructure so the built-in
+	 * rtl8169 driver can bind after PCI enumeration. The reg cell
+	 * here is a simple representation for bus 2, device 0, function 0.
+	 * Adjust if your board enumerates the device at a different address.
+	 */
+	/* PCI device is enumerated on bus 1 (seen as 01:00.0). Use bus/device/function
+	 * encoding so U-Boot maps BARs correctly and the rtl driver can access MMIO.
+	 */
+	rtl_eth: ethernet@1,0 {
+		compatible = "realtek,rtl8169";
+		device_type = "pci";
+		/* PCI address: bus 1, device 0, function 0 */
+		reg = <0x01 0x00 0x00>;
+		status = "okay";
+	};
 };
 
 /* PCIE2 not working in u-boot */
