@@ -108,6 +108,21 @@
 
 &pcie1 {
 	status = "okay";
+
+	/* PCI device node for an on-board Realtek RTL8169/8125 family NIC.
+	 * Declaring device_type = "pci" and a reg entry makes the device
+	 * visible to U-Boot's OF/PCI infrastructure so the built-in
+	 * rtl8169 driver can bind after PCI enumeration. The reg cell
+	 * here is a simple representation for bus 2, device 0, function 0.
+	 * Adjust if your board enumerates the device at a different address.
+	 */
+	ethernet@2,0 {
+		compatible = "realtek,rtl8169";
+		device_type = "pci";
+		/* PCI address: bus 2, device 0, function 0 */
+		reg = <0x02 0x00 0x00>;
+		status = "okay";
+	};
 };
 
 /* PCIE2 not working in u-boot */
