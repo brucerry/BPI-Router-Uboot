@@ -181,6 +181,17 @@
 
 &pcie1 {
 	status = "okay";
+
+	/* PCI device node for an on-board Realtek RTL8169/8125 family NIC.
+	 * See note in mt7988-rfb.dts. Reg is bus/device/function placeholder.
+	 */
+	ethernet@1,0 {
+		compatible = "realtek,rtl8169";
+		device_type = "pci";
+		/* PCI address: bus 1, device 0, function 0 */
+		reg = <0x01 0x00 0x00>;
+		status = "okay";
+	};
 };
 
 &pcie3 {
