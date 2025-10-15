@@ -104,10 +104,20 @@
 
 &pcie0 {
 	status = "okay";
+
+	ethernet@0,0 {
+		compatible = "realtek,rtl8169";
+		reg = <0x000000 0 0 0 0>;
+	};
 };
 
 &pcie1 {
 	status = "okay";
+
+	ethernet@0,0 {
+		compatible = "realtek,rtl8169";
+		reg = <0x000000 0 0 0 0>;
+	};
 };
 
 /* PCIE2 not working in u-boot */
