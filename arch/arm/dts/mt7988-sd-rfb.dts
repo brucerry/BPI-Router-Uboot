@@ -181,6 +181,11 @@
 
 &pcie1 {
 	status = "okay";
+
+	ethernet@3 {
+		compatible = "realtek,rtl8169";
+		reg = <0x000000 0 0 0 0>;
+	};
 };
 
 &pcie3 {
