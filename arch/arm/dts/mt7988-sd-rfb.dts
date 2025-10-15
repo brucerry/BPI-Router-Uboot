@@ -12,6 +12,11 @@
 	model = "mt7988-rfb";
 	compatible = "mediatek,mt7988-rfb", "mediatek,mt7988-sd-rfb";
 
+	aliases {
+		ethernet0 = &eth0; /* keep built-in switch as eth0 */
+		ethernet1 = &rtl_eth; /* PCI RTL8125/8169 as eth1 */
+	};
+
 	chosen {
 		stdout-path = &uart0;
 	};
@@ -180,6 +185,17 @@
 
 &pcie1 {
 	status = "okay";
+
+	/* PCI device node for an on-board Realtek RTL8169/8125 family NIC.
+	 * See note in mt7988-rfb.dts. Reg is bus/device/function placeholder.
+	 */
+	rtl_eth: ethernet@1,0 {
+		compatible = "realtek,rtl8169";
+		device_type = "pci";
+		/* PCI address: bus 1, device 0, function 0 */
+		reg = <0x01 0x00 0x00>;
+		status = "okay";
+	};
 };
 
 &pcie3 {
