@@ -56,6 +56,9 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG_RTL8169
+#define DEBUG
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -703,7 +706,7 @@ static void rtl8169_hw_start(struct udevice *dev)
 	printf ("%s\n", __FUNCTION__);
 #endif
 
-#if 0
+#if 1
 	/* Soft reset the chip. */
 	RTL_W8(ChipCmd, CmdReset);
 
