@@ -703,7 +703,7 @@ static void rtl8169_hw_start(struct udevice *dev)
 	printf ("%s\n", __FUNCTION__);
 #endif
 
-#if 0
+#if 1
 	/* Soft reset the chip. */
 	RTL_W8(ChipCmd, CmdReset);
 
