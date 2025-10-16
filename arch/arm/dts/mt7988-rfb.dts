@@ -109,10 +109,12 @@
 
 &pcie0 {
 	status = "okay";
+	reset-gpios = <&pio 19 GPIO_ACTIVE_LOW>;
 };
 
 &pcie1 {
 	status = "okay";
+	reset-gpios = <&pio 73 GPIO_ACTIVE_LOW>;
 
 	/* PCI device node for an on-board Realtek RTL8169/8125 family NIC.
 	 * Declaring device_type = "pci" and a reg entry makes the device
@@ -136,11 +138,13 @@
 /* PCIE2 not working in u-boot */
 &pcie2 {
 	status = "disabled";
+	reset-gpios = <&pio 74 GPIO_ACTIVE_LOW>;
 };
 
 /* PCIE3 not working in u-boot */
 &pcie3 {
 	status = "disabled";
+	reset-gpios = <&pio 20 GPIO_ACTIVE_LOW>;
 };
 
 &pio {
