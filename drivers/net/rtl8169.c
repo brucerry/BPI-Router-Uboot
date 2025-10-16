@@ -56,6 +56,8 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG_RTL8169
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -935,6 +937,13 @@ static int rtl_init(unsigned long dev_ioaddr, const char *name,
 	printf("%s: at ioaddr 0x%lx\n", name, ioaddr);
 #endif
 
+	ushort phy_status = RTL_R8(PHYstatus);
+	printf("%s: PHY status: 0x%04x\n", name, phy_status);
+
+	printf("%s: Clear TBI_Enable bit\n", name);
+	RTL_W8(PHYstatus, phy_status & ~TBI_Enable);
+	udelay(100);
+
 	/* if TBI is not endbled */
 	if (!(RTL_R8(PHYstatus) & TBI_Enable)) {
 		int val = mdio_read(PHY_AUTO_NEGO_REG);
@@ -1065,7 +1074,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 					     0, 0,
 					     PCI_REGION_TYPE, PCI_REGION_MEM);
 
-	debug("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+	printf("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
 	ret = rtl_init(priv->iobase, dev->name, plat->enetaddr);
 	if (ret < 0) {
 		printf(pr_fmt("failed to initialize card: %d\n"), ret);
@@ -1081,7 +1090,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 	 */
 
 	u32 val = RTL_R32(FuncEvent);
-	debug("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
+	printf("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
 	val &= ~RxDv_Gated_En;
 	RTL_W32(FuncEvent, val);
 
