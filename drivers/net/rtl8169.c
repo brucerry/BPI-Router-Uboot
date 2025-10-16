@@ -56,6 +56,9 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG
+#define DEBUG_RTL8169
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -703,7 +706,7 @@ static void rtl8169_hw_start(struct udevice *dev)
 	printf ("%s\n", __FUNCTION__);
 #endif
 
-#if 0
+#if 1
 	/* Soft reset the chip. */
 	RTL_W8(ChipCmd, CmdReset);
 
@@ -1065,7 +1068,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 					     0, 0,
 					     PCI_REGION_TYPE, PCI_REGION_MEM);
 
-	debug("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+	printf("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
 	ret = rtl_init(priv->iobase, dev->name, plat->enetaddr);
 	if (ret < 0) {
 		printf(pr_fmt("failed to initialize card: %d\n"), ret);
@@ -1081,7 +1084,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 	 */
 
 	u32 val = RTL_R32(FuncEvent);
-	debug("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
+	printf("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
 	val &= ~RxDv_Gated_En;
 	RTL_W32(FuncEvent, val);
 
