@@ -56,6 +56,8 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG_RTL8169
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -107,6 +109,10 @@ static int media[MAX_UNITS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 	(pci_addr_t)(unsigned long)a)
 #define phys_to_bus(a)	pci_phys_to_mem((pci_dev_t)(unsigned long)dev->priv, \
 	(phys_addr_t)a)
+
+#ifndef PCI_COMMAND
+#define PCI_COMMAND 0x04
+#endif
 
 enum RTL8169_registers {
 	MAC0 = 0,		/* Ethernet hardware address. */
@@ -1041,6 +1047,82 @@ static int rtl_init(unsigned long dev_ioaddr, const char *name,
 	return 0;
 }
 
+/* New helper: minimal warm-reset / register cleanup for RTL8125 devices.
+ * This attempts to recover RTL8125 left in a low-power / gated-Rx state
+ * after a Linux warm reboot. It is intentionally conservative:
+ * - MAC soft reset (ChipCmd),
+ * - clear FuncPresetState and FuncForceEvent,
+ * - clear RxDv_Gated_En in FuncEvent.
+ */
+static void rtl_8125_warm_reset(struct udevice *dev, unsigned long dev_iobase)
+{
+	int i;
+	u32 val;
+
+	/* operate against the mapped MMIO BAR */
+	ioaddr = dev_iobase;
+
+	printf("rtl: performing warm reset/cleanup for RTL8125\n");
+
+	/* Unlock config */
+	RTL_W8(Cfg9346, Cfg9346_Unlock);
+
+	/* Soft reset the chip */
+	RTL_W8(ChipCmd, CmdReset);
+
+	/* Wait for reset to finish */
+	for (i = 1000; i > 0; i--) {
+		if ((RTL_R8(ChipCmd) & CmdReset) == 0)
+			break;
+		udelay(10);
+	}
+
+	/* Clear preset/force registers that kernel drivers sometimes leave set */
+	RTL_W32(FuncPresetState, 0x0);
+	udelay(50);
+	RTL_W32(FuncForceEvent, 0x0);
+	udelay(50);
+
+	/* Clear RxDv_Gated_En bit in FuncEvent (WAR for DHCP failure after reboot) */
+	val = RTL_R32(FuncEvent);
+	val &= ~RxDv_Gated_En;
+	RTL_W32(FuncEvent, val);
+
+	/* Lock config and give hardware a moment */
+	RTL_W8(Cfg9346, Cfg9346_Lock);
+	udelay(100);
+
+	printf("rtl: warm reset/cleanup done\n");
+}
+
+/* Try to reset the PCI function by a disable/enable sequence. This is a
+ * conservative fallback if an explicit PCIe FLR helper is not available.
+ * It disables the device (clear PCI command), waits, then restores it.
+ */
+static void try_pci_reset_fallback(struct udevice *dev)
+{
+	u32 cmd = 0;
+	u32 saved = 0;
+
+	/* Read PCI Command register (offset 0x04) */
+	if (dm_pci_read_config32(dev, PCI_COMMAND, &cmd) == 0) {
+		/* Save current command */
+		saved = cmd;
+		printf("rtl: pci cmd before reset: 0x%08x\n", saved);
+
+		/* Disable device (clear memory and busmaster bits) */
+		dm_pci_write_config32(dev, PCI_COMMAND, 0);
+		udelay(1000);
+
+		/* Restore original command */
+		dm_pci_write_config32(dev, PCI_COMMAND, saved);
+		udelay(1000);
+		printf("rtl: pci cmd restored to: 0x%08x\n", saved);
+	} else {
+		printf("rtl: unable to read PCI command register for reset fallback\n");
+	}
+}
+
 static int rtl8169_eth_probe(struct udevice *dev)
 {
 	struct pci_child_plat *pplat = dev_get_parent_plat(dev);
@@ -1065,7 +1147,21 @@ static int rtl8169_eth_probe(struct udevice *dev)
 					     0, 0,
 					     PCI_REGION_TYPE, PCI_REGION_MEM);
 
-	debug("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+	printf("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+
+	/* If this is RTL8125 try a PCI reset sequence before reinitializing.
+	 * Prefer a FLR if your U-Boot has a FLR helper; otherwise use the
+	 * disable/enable fallback and then the vendor warm-reset/cleanup.
+	 */
+	if (pplat->device == 0x8125) {
+#if defined(CONFIG_PCI) && defined(CONFIG_DM_PCI)
+		/* Attempt a device reset fallback (disable/enable) */
+		try_pci_reset_fallback(dev);
+#endif
+		/* Then do the vendor cleanup */
+		rtl_8125_warm_reset(dev, priv->iobase);
+	}
+
 	ret = rtl_init(priv->iobase, dev->name, plat->enetaddr);
 	if (ret < 0) {
 		printf(pr_fmt("failed to initialize card: %d\n"), ret);
@@ -1081,7 +1177,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 	 */
 
 	u32 val = RTL_R32(FuncEvent);
-	debug("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
+	printf("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
 	val &= ~RxDv_Gated_En;
 	RTL_W32(FuncEvent, val);
 
