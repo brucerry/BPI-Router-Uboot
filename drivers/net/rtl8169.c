@@ -56,6 +56,8 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG_RTL8169
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -107,6 +109,10 @@ static int media[MAX_UNITS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 	(pci_addr_t)(unsigned long)a)
 #define phys_to_bus(a)	pci_phys_to_mem((pci_dev_t)(unsigned long)dev->priv, \
 	(phys_addr_t)a)
+
+#ifndef PCI_COMMAND
+#define PCI_COMMAND 0x04
+#endif
 
 enum RTL8169_registers {
 	MAC0 = 0,		/* Ethernet hardware address. */
@@ -555,10 +561,8 @@ static int rtl_recv_common(struct udevice *dev, unsigned long dev_iobase,
 			else
 				tpc->RxDescArray[cur_rx].status =
 					cpu_to_le32(OWNbit + RX_BUF_SIZE);
-			tpc->RxDescArray[cur_rx].buf_addr = cpu_to_le32(
-				dm_pci_mem_to_phys(dev,
-					(pci_addr_t)(unsigned long)
-					tpc->RxBufferRing[cur_rx]));
+			tpc->RxDescArray[cur_rx].buf_addr = cpu_to_le32(dm_pci_mem_to_phys(
+				dev, (pci_addr_t)(unsigned long)tpc->RxBufferRing[cur_rx]));
 			rtl_flush_rx_desc(&tpc->RxDescArray[cur_rx]);
 			*packetp = rxdata;
 		} else {
@@ -1041,6 +1045,127 @@ static int rtl_init(unsigned long dev_ioaddr, const char *name,
 	return 0;
 }
 
+/* New helper: minimal warm-reset / register cleanup for RTL8125 devices.
+ * This attempts to recover RTL8125 left in a low-power / gated-Rx state
+ * after a Linux warm reboot. It is intentionally conservative:
+ * - MAC soft reset (ChipCmd),
+ * - clear FuncPresetState and FuncForceEvent,
+ * - clear RxDv_Gated_En in FuncEvent.
+ */
+static void rtl_8125_warm_reset(struct udevice *dev, unsigned long dev_iobase)
+{
+	int i;
+	u32 val;
+
+	/* operate against the mapped MMIO BAR */
+	ioaddr = dev_iobase;
+
+	printf("rtl: performing warm reset/cleanup for RTL8125\n");
+
+	/* Unlock config */
+	RTL_W8(Cfg9346, Cfg9346_Unlock);
+
+	/* Soft reset the chip */
+	RTL_W8(ChipCmd, CmdReset);
+
+	/* Wait for reset to finish */
+	for (i = 1000; i > 0; i--) {
+		if ((RTL_R8(ChipCmd) & CmdReset) == 0)
+			break;
+		udelay(10);
+	}
+
+	/* Clear preset/force registers that kernel drivers sometimes leave set */
+	RTL_W32(FuncPresetState, 0x0);
+	udelay(50);
+	RTL_W32(FuncForceEvent, 0x0);
+	udelay(50);
+
+	/* Clear RxDv_Gated_En bit in FuncEvent (WAR for DHCP failure after reboot) */
+	val = RTL_R32(FuncEvent);
+	val &= ~RxDv_Gated_En;
+	RTL_W32(FuncEvent, val);
+
+	/* Lock config and give hardware a moment */
+	RTL_W8(Cfg9346, Cfg9346_Lock);
+	udelay(100);
+
+	printf("rtl: warm reset/cleanup done\n");
+}
+
+/*
+ * Improved PCI reset fallback:
+ * - Read and save PCI command register
+ * - Disable device by clearing command (disables MEM and BUSMASTER)
+ * - Try to find PCI Power Management capability and force D0
+ * - Restore command and give device time
+ *
+ * This is conservative and uses only PCI config-space ops available in U-Boot DM.
+ */
+static void rtl_try_pci_reset_aggressive(struct udevice *dev)
+{
+	u32 cmd32;
+	u8 cap_ptr;
+	u8 cap_id;
+	u16 pmcsr;
+	u8 cap_off;
+	int ret;
+
+	/* Read and save command (32-bit read to cover whole register) */
+	ret = dm_pci_read_config32(dev, PCI_COMMAND, &cmd32);
+	if (ret) {
+		printf("rtl: failed to read PCI command: %d\n", ret);
+		return;
+	}
+	printf("rtl: saved PCI command 0x%08x\n", cmd32);
+
+	/* Disable device (clear memory and bus-master bits) */
+	dm_pci_write_config32(dev, PCI_COMMAND, 0x0);
+	udelay(1000);
+
+	/* Walk capability list to find PM capability (ID 0x01) */
+	ret = dm_pci_read_config8(dev, PCI_CAPABILITY_LIST, &cap_ptr);
+	if (ret) {
+		printf("rtl: cannot read cap pointer: %d\n", ret);
+		cap_ptr = 0;
+	}
+
+	while (cap_ptr) {
+		ret = dm_pci_read_config8(dev, cap_ptr, &cap_id);
+		if (ret) {
+			printf("rtl: cap read failed at 0x%02x (%d)\n", cap_ptr, ret);
+			break;
+		}
+
+		/* PM capability ID == 0x01 */
+		if (cap_id == 0x01) {
+			cap_off = cap_ptr;
+			/* PMCSR is usually at cap_off + 4 (16-bit) */
+			ret = dm_pci_read_config16(dev, cap_off + 4, &pmcsr);
+			if (ret == 0) {
+				printf("rtl: PMCSR before 0x%04x\n", pmcsr);
+				/* Force D0 by writing 0 (bits [1:0] = 00) */
+				dm_pci_write_config16(dev, cap_off + 4, 0);
+				udelay(500);
+				printf("rtl: PMCSR set to D0\n");
+			}
+			break;
+		}
+
+		/* next capability pointer is at cap_ptr + 1 */
+		ret = dm_pci_read_config8(dev, cap_ptr + 1, &cap_ptr);
+		if (ret) {
+			printf("rtl: failed to read next cap ptr at 0x%02x\n", cap_ptr);
+			break;
+		}
+	}
+
+	/* Restore PCI command */
+	dm_pci_write_config32(dev, PCI_COMMAND, cmd32);
+	udelay(1000);
+	printf("rtl: restored PCI command 0x%08x\n", cmd32);
+}
+
 static int rtl8169_eth_probe(struct udevice *dev)
 {
 	struct pci_child_plat *pplat = dev_get_parent_plat(dev);
@@ -1060,12 +1185,29 @@ static int rtl8169_eth_probe(struct udevice *dev)
 		break;
 	}
 
+	/* Map BAR early so we can access device MMIO for vendor resets */
 	priv->iobase = (ulong)dm_pci_map_bar(dev,
 					     PCI_BASE_ADDRESS_0 + region * 4,
 					     0, 0,
 					     PCI_REGION_TYPE, PCI_REGION_MEM);
 
-	debug("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+	printf("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+
+	/* If this is RTL8125, try a more aggressive PCI reset + vendor cleanup.
+	 * The sequence:
+	 *  - disable/enable + force D0 via PMCSR if available
+	 *  - then perform vendor warm reset/cleanup (so MMIO writes are valid)
+	 *  - remap BAR is not strictly necessary, but we keep the same mapping
+	 *    and proceed with normal init.
+	 */
+	if (pplat->device == 0x8125) {
+#if defined(CONFIG_PCI) && defined(CONFIG_DM_PCI)
+		rtl_try_pci_reset_aggressive(dev);
+#endif
+		/* Vendor-level cleanup (soft reset + FuncEvent/Force/Preset clears) */
+		rtl_8125_warm_reset(dev, priv->iobase);
+	}
+
 	ret = rtl_init(priv->iobase, dev->name, plat->enetaddr);
 	if (ret < 0) {
 		printf(pr_fmt("failed to initialize card: %d\n"), ret);
@@ -1081,7 +1223,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 	 */
 
 	u32 val = RTL_R32(FuncEvent);
-	debug("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
+	printf("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
 	val &= ~RxDv_Gated_En;
 	RTL_W32(FuncEvent, val);
 
