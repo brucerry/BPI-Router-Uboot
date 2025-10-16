@@ -56,6 +56,8 @@
 #undef DEBUG_RTL8169_TX
 #undef DEBUG_RTL8169_RX
 
+#define DEBUG_RTL8169
+
 #define drv_version "v1.5"
 #define drv_date "01-17-2004"
 
@@ -1041,6 +1043,54 @@ static int rtl_init(unsigned long dev_ioaddr, const char *name,
 	return 0;
 }
 
+/* New helper: minimal warm-reset / register cleanup for RTL8125 devices.
+ * This attempts to recover RTL8125 left in a low-power / gated-Rx state
+ * after a Linux warm reboot. It is intentionally conservative:
+ * - MAC soft reset (ChipCmd),
+ * - clear FuncPresetState and FuncForceEvent,
+ * - clear RxDv_Gated_En in FuncEvent.
+ */
+static void rtl_8125_warm_reset(struct udevice *dev, unsigned long dev_iobase)
+{
+	int i;
+	u32 val;
+
+	/* operate against the mapped MMIO BAR */
+	ioaddr = dev_iobase;
+
+	printf("rtl: performing warm reset/cleanup for RTL8125\n");
+
+	/* Unlock config */
+	RTL_W8(Cfg9346, Cfg9346_Unlock);
+
+	/* Soft reset the chip */
+	RTL_W8(ChipCmd, CmdReset);
+
+	/* Wait for reset to finish */
+	for (i = 1000; i > 0; i--) {
+		if ((RTL_R8(ChipCmd) & CmdReset) == 0)
+			break;
+		udelay(10);
+	}
+
+	/* Clear preset/force registers that kernel drivers sometimes leave set */
+	RTL_W32(FuncPresetState, 0x0);
+	udelay(50);
+	RTL_W32(FuncForceEvent, 0x0);
+	udelay(50);
+
+	/* Clear RxDv_Gated_En bit in FuncEvent (WAR for DHCP failure after reboot) */
+	val = RTL_R32(FuncEvent);
+	val &= ~RxDv_Gated_En;
+	RTL_W32(FuncEvent, val);
+
+	/* Lock config and give hardware a moment */
+	RTL_W8(Cfg9346, Cfg9346_Lock);
+	udelay(100);
+
+	printf("rtl: warm reset/cleanup done\n");
+}
+
 static int rtl8169_eth_probe(struct udevice *dev)
 {
 	struct pci_child_plat *pplat = dev_get_parent_plat(dev);
@@ -1065,7 +1115,15 @@ static int rtl8169_eth_probe(struct udevice *dev)
 					     0, 0,
 					     PCI_REGION_TYPE, PCI_REGION_MEM);
 
-	debug("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+	printf("rtl8169: REALTEK RTL8169 @0x%lx\n", priv->iobase);
+
+	/* Try a conservative warm-reset/cleanup for RTL8125 devices to recover
+	 * from states left by Linux after a warm reboot. This improves the case
+	 * where the device works after a power-cycle but not after a reboot.
+	 */
+	if (pplat->device == 0x8125)
+		rtl_8125_warm_reset(dev, priv->iobase);
+
 	ret = rtl_init(priv->iobase, dev->name, plat->enetaddr);
 	if (ret < 0) {
 		printf(pr_fmt("failed to initialize card: %d\n"), ret);
@@ -1081,7 +1139,7 @@ static int rtl8169_eth_probe(struct udevice *dev)
 	 */
 
 	u32 val = RTL_R32(FuncEvent);
-	debug("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
+	printf("%s: FuncEvent/Misc (0xF0) = 0x%08X\n", __func__, val);
 	val &= ~RxDv_Gated_En;
 	RTL_W32(FuncEvent, val);
 
