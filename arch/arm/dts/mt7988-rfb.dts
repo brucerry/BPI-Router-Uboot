@@ -50,12 +50,6 @@
 	status = "okay";
 };
 
-&i2c1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2c1_pins>;
-	status = "okay";
-};
-
 &i2c2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c2_1_pins>;
@@ -115,9 +109,8 @@
 	status = "disabled";
 };
 
-/* PCIE3 not working in u-boot */
 &pcie3 {
-	status = "disabled";
+	status = "okay";
 };
 
 &pio {
